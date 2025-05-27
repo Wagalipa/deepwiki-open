@@ -4,12 +4,16 @@ FROM node:20-alpine AS node_base
 
 FROM node_base AS node_deps
 WORKDIR /app
-COPY package.json package-lock.json ./
-RUN npm ci --legacy-peer-deps
+COPY package.json pnpm-lock.yaml ./
+RUN apk add wget && \
+    wget -qO- https://get.pnpm.io/install.sh | ENV="$HOME/.shrc" SHELL="$(which sh)" sh - && \
+    mv /root/.local/share/pnpm/pnpm /usr/local/bin/pnpm
+RUN pnpm install --frozen-lockfile
 
 FROM node_base AS node_builder
 WORKDIR /app
 COPY --from=node_deps /app/node_modules ./node_modules
+COPY --from=node_deps /usr/local/bin/pnpm /usr/local/bin/pnpm
 # Copy only necessary files for Next.js build
 COPY package.json package-lock.json next.config.ts tsconfig.json tailwind.config.js postcss.config.mjs ./
 COPY src/ ./src/
@@ -17,7 +21,7 @@ COPY public/ ./public/
 # Increase Node.js memory limit for build and disable telemetry
 ENV NODE_OPTIONS="--max-old-space-size=4096"
 ENV NEXT_TELEMETRY_DISABLED=1
-RUN NODE_ENV=production npm run build
+RUN NODE_ENV=production pnpm run build
 
 FROM python:3.11-slim AS py_deps
 WORKDIR /app
