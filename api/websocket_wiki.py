@@ -47,8 +47,13 @@ class ChatCompletionRequest(BaseModel):
     type: Optional[str] = Field("github", description="Type of repository (e.g., 'github', 'gitlab', 'bitbucket')")
 
     # model parameters
-    provider: str = Field("google", description="Model provider (google, openai, openrouter, ollama)")
+    provider: str = Field("google", description="Model provider (google, openai, openrouter, ollama, azure-openai)")
     model: Optional[str] = Field(None, description="Model name for the specified provider")
+
+    # Azure OpenAI specific parameters
+    azure_endpoint: Optional[str] = Field(None, description="Azure OpenAI endpoint URL (required for azure-openai provider)")
+    azure_api_key: Optional[str] = Field(None, description="Azure OpenAI API key (required for azure-openai provider)")
+    azure_api_version: Optional[str] = Field("2024-02-01", description="Azure OpenAI API version")
 
     language: Optional[str] = Field("en", description="Language for content generation (e.g., 'en', 'ja', 'zh', 'es', 'kr', 'vi')")
     excluded_dirs: Optional[str] = Field(None, description="Comma-separated list of directories to exclude from processing")
@@ -501,6 +506,46 @@ This file contains...
                 model_kwargs=model_kwargs,
                 model_type=ModelType.LLM
             )
+        elif request.provider == "azure-openai":
+            logger.info(f"Using Azure OpenAI protocol with model: {request.model}")
+
+            # Use configuration from request first, then fall back to environment variables
+            azure_endpoint = request.azure_endpoint or os.environ.get("AZURE_OPENAI_ENDPOINT")
+            azure_api_key = request.azure_api_key or os.environ.get("AZURE_OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY")
+            azure_api_version = request.azure_api_version or os.environ.get("AZURE_OPENAI_API_VERSION", "2024-02-01")
+
+            if not azure_endpoint:
+                error_msg = "Azure OpenAI endpoint is required. Please provide it in the configuration or set AZURE_OPENAI_ENDPOINT environment variable."
+                logger.error(error_msg)
+                await websocket.send_text(error_msg)
+                await websocket.close()
+                return
+            
+            if not azure_api_key:
+                error_msg = "Azure OpenAI API key is required. Please provide it in the configuration or set AZURE_OPENAI_API_KEY or OPENAI_API_KEY environment variable."
+                logger.error(error_msg)
+                await websocket.send_text(error_msg)
+                await websocket.close()
+                return
+
+            # Initialize Azure OpenAI client
+            model = OpenAIClient(
+                azure_endpoint=azure_endpoint,
+                api_key=azure_api_key,
+                api_version=azure_api_version
+            )
+            model_kwargs = {
+                "model": request.model,
+                "stream": True,
+                "temperature": model_config["temperature"],
+                "top_p": model_config["top_p"]
+            }
+
+            api_kwargs = model.convert_inputs_to_api_kwargs(
+                input=prompt,
+                model_kwargs=model_kwargs,
+                model_type=ModelType.LLM
+            )
         else:
             # Initialize Google Generative AI model
             model = genai.GenerativeModel(
@@ -560,6 +605,28 @@ This file contains...
                 except Exception as e_openai:
                     logger.error(f"Error with Openai API: {str(e_openai)}")
                     error_msg = f"\nError with Openai API: {str(e_openai)}\n\nPlease check that you have set the OPENAI_API_KEY environment variable with a valid API key."
+                    await websocket.send_text(error_msg)
+                    # Close the WebSocket connection after sending the error message
+                    await websocket.close()
+            elif request.provider == "azure-openai":
+                try:
+                    # Get the response and handle it properly using the previously created api_kwargs
+                    logger.info("Making Azure OpenAI API call")
+                    response = await model.acall(api_kwargs=api_kwargs, model_type=ModelType.LLM)
+                    # Handle streaming response from Azure OpenAI (same as OpenAI)
+                    async for chunk in response:
+                        choices = getattr(chunk, "choices", [])
+                        if len(choices) > 0:
+                            delta = getattr(choices[0], "delta", None)
+                            if delta is not None:
+                                text = getattr(delta, "content", None)
+                                if text is not None:
+                                    await websocket.send_text(text)
+                    # Explicitly close the WebSocket connection after the response is complete
+                    await websocket.close()
+                except Exception as e_azure:
+                    logger.error(f"Error with Azure OpenAI API: {str(e_azure)}")
+                    error_msg = f"\nError with Azure OpenAI API: {str(e_azure)}\n\nPlease check your Azure OpenAI configuration (AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY, AZURE_OPENAI_API_VERSION)."
                     await websocket.send_text(error_msg)
                     # Close the WebSocket connection after sending the error message
                     await websocket.close()
@@ -653,6 +720,32 @@ This file contains...
                         except Exception as e_fallback:
                             logger.error(f"Error with Openai API fallback: {str(e_fallback)}")
                             error_msg = f"\nError with Openai API fallback: {str(e_fallback)}\n\nPlease check that you have set the OPENAI_API_KEY environment variable with a valid API key."
+                            await websocket.send_text(error_msg)
+                    elif request.provider == "azure-openai":
+                        try:
+                            # Create new api_kwargs with the simplified prompt
+                            fallback_api_kwargs = model.convert_inputs_to_api_kwargs(
+                                input=simplified_prompt,
+                                model_kwargs=model_kwargs,
+                                model_type=ModelType.LLM
+                            )
+
+                            # Get the response using the simplified prompt
+                            logger.info("Making fallback Azure OpenAI API call")
+                            fallback_response = await model.acall(api_kwargs=fallback_api_kwargs, model_type=ModelType.LLM)
+
+                            # Handle streaming fallback_response from Azure OpenAI (same as OpenAI)
+                            async for chunk in fallback_response:
+                                choices = getattr(chunk, "choices", [])
+                                if len(choices) > 0:
+                                    delta = getattr(choices[0], "delta", None)
+                                    if delta is not None:
+                                        text = getattr(delta, "content", None)
+                                        if text is not None:
+                                            await websocket.send_text(text)
+                        except Exception as e_fallback:
+                            logger.error(f"Error with Azure OpenAI API fallback: {str(e_fallback)}")
+                            error_msg = f"\nError with Azure OpenAI API fallback: {str(e_fallback)}\n\nPlease check your Azure OpenAI configuration (AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY, AZURE_OPENAI_API_VERSION)."
                             await websocket.send_text(error_msg)
                     else:
                         # Initialize Google Generative AI model

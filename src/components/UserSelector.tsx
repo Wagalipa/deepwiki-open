@@ -288,11 +288,25 @@ next.config.js
             className="input-japanese block w-full px-2.5 py-1.5 text-sm rounded-md bg-transparent text-[var(--foreground)] focus:outline-none focus:border-[var(--accent-primary)]"
           >
             <option value="" disabled>{t.form?.selectProvider || 'Select Provider'}</option>
-            {modelConfig?.providers.map((providerOption) => (
-              <option key={providerOption.id} value={providerOption.id}>
-                {t.form?.[`provider${providerOption.id.charAt(0).toUpperCase() + providerOption.id.slice(1)}`] || providerOption.name}
-              </option>
-            ))}
+            {modelConfig?.providers.map((providerOption) => {
+              // Create mapping for provider names
+              const getProviderDisplayName = (providerId: string) => {
+                const nameMap: { [key: string]: string } = {
+                  'google': t.form?.providerGoogle || 'Google',
+                  'openai': t.form?.providerOpenAI || 'OpenAI',
+                  'azure-openai': t.form?.providerAzureOpenAI || 'Azure OpenAI',
+                  'openrouter': t.form?.providerOpenRouter || 'OpenRouter',
+                  'ollama': t.form?.providerOllama || 'Ollama (Local)',
+                };
+                return nameMap[providerId] || providerOption.name;
+              };
+
+              return (
+                <option key={providerOption.id} value={providerOption.id}>
+                  {getProviderDisplayName(providerOption.id)}
+                </option>
+              );
+            })}
           </select>
         </div>
 

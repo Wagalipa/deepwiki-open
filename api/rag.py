@@ -219,20 +219,37 @@ class RAG(adal.Component):
         self.provider = provider
         self.model = model
         self.local_ollama = provider == "ollama"
+        self.azure_openai = provider == "azure-openai"
 
         # Initialize components
         self.memory = Memory()
 
         if self.local_ollama:
             embedder_config = configs["embedder_ollama"]
+        elif self.azure_openai:
+            embedder_config = configs["embedder_azure"]
         else:
             embedder_config = configs["embedder"]
 
         # --- Initialize Embedder ---
-        self.embedder = adal.Embedder(
-            model_client=embedder_config["model_client"](),
-            model_kwargs=embedder_config["model_kwargs"],
-        )
+        if self.azure_openai:
+            # For Azure OpenAI, create client with Azure-specific configuration
+            from api.openai_client import OpenAIClient
+            import os
+            azure_client = OpenAIClient(
+                azure_endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT"),
+                api_key=os.environ.get("AZURE_OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY"),
+                api_version=os.environ.get("AZURE_OPENAI_API_VERSION", "2024-02-01")
+            )
+            self.embedder = adal.Embedder(
+                model_client=azure_client,
+                model_kwargs=embedder_config["model_kwargs"],
+            )
+        else:
+            self.embedder = adal.Embedder(
+                model_client=embedder_config["model_client"](),
+                model_kwargs=embedder_config["model_kwargs"],
+            )
 
         # Patch: ensure query embedding is always single string for Ollama
         def single_string_embedder(query):
@@ -403,6 +420,7 @@ IMPORTANT FORMATTING RULES:
             type,
             access_token,
             local_ollama=self.local_ollama,
+            provider=self.provider,
             excluded_dirs=excluded_dirs,
             excluded_files=excluded_files,
             included_dirs=included_dirs,

@@ -25,7 +25,7 @@
 - **简易导航**：简单、直观的界面探索Wiki
 - **提问功能**：使用RAG驱动的AI与您的仓库聊天，获取准确答案
 - **深度研究**：多轮研究过程，彻底调查复杂主题
-- **多模型提供商**：支持Google Gemini、OpenAI、OpenRouter和本地Ollama模型
+- **多模型提供商**：支持Google Gemini、OpenAI、Azure OpenAI、OpenRouter和本地Ollama模型
 
 ## 🚀 快速开始（超级简单！）
 
@@ -41,6 +41,10 @@ echo "GOOGLE_API_KEY=your_google_api_key" > .env
 echo "OPENAI_API_KEY=your_openai_api_key" >> .env
 # 可选：如果您想使用OpenRouter模型，添加OpenRouter API密钥
 echo "OPENROUTER_API_KEY=your_openrouter_api_key" >> .env
+# 可选：如果您想使用Azure OpenAI，添加Azure OpenAI设置
+echo "AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/" >> .env
+echo "AZURE_OPENAI_API_KEY=your_azure_api_key" >> .env
+echo "AZURE_OPENAI_API_VERSION=2024-02-01" >> .env
 
 # 使用Docker Compose运行
 docker-compose up

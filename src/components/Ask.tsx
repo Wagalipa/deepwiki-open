@@ -52,6 +52,7 @@ const Ask: React.FC<AskProps> = ({
   const [customSelectedModel, setCustomSelectedModel] = useState(customModel);
   const [isModelSelectionModalOpen, setIsModelSelectionModalOpen] = useState(false);
   const [isComprehensiveView, setIsComprehensiveView] = useState(true);
+  const [errorMessage, setErrorMessage] = useState('');
 
   // Get language context for translations
   const { messages } = useLanguage();
@@ -256,6 +257,10 @@ const Ask: React.FC<AskProps> = ({
         model: isCustomSelectedModel ? customSelectedModel : selectedModel,
         language: language
       };
+
+      // Add Azure OpenAI configuration if using azure-openai provider
+      // Azure OpenAI provider will use environment variables only
+      // No additional configuration needed from frontend
 
       // Add tokens if available
       if (repoInfo?.token) {
@@ -473,6 +478,9 @@ const Ask: React.FC<AskProps> = ({
 
   // Handle confirm and send request
   const handleConfirmAsk = async () => {
+    // Clear any previous error messages
+    setErrorMessage('');
+    
     setIsLoading(true);
     setResponse('');
     setResearchIteration(0);
@@ -579,6 +587,13 @@ const Ask: React.FC<AskProps> = ({
 
         {/* Question input */}
         <form onSubmit={handleSubmit} className="mt-4">
+          {/* Error message display */}
+          {errorMessage && (
+            <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-md">
+              <p className="text-sm text-red-700">{errorMessage}</p>
+            </div>
+          )}
+
           <div className="relative">
             <input
               ref={inputRef}

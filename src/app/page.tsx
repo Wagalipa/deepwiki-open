@@ -89,6 +89,7 @@ export default function Home() {
   const [includedFiles, setIncludedFiles] = useState('');
   const [selectedPlatform, setSelectedPlatform] = useState<'github' | 'gitlab' | 'bitbucket'>('github');
   const [accessToken, setAccessToken] = useState('');
+  
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [selectedLanguage, setSelectedLanguage] = useState<string>(language);
@@ -236,7 +237,6 @@ export default function Home() {
 
     // Add comprehensive parameter
     params.append('comprehensive', isComprehensiveView.toString());
-
     const queryString = params.toString() ? `?${params.toString()}` : '';
 
     // Navigate to the dynamic route

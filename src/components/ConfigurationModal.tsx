@@ -220,6 +220,48 @@ export default function ConfigurationModal({
               />
             </div>
 
+            {/* Azure OpenAI Configuration Note */}
+            {provider === 'azure-openai' && (
+              <div className="mb-4 p-4 bg-[var(--background)]/50 rounded-md border border-[var(--border-color)]">
+                <div className="flex items-start">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-3 text-[var(--accent-primary)] mt-0.5 flex-shrink-0"
+                    fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                      d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <div className="text-sm text-[var(--foreground)]">
+                    <div className="font-medium mb-2">{t.form?.azureConfigRequired || 'Azure OpenAI Configuration Required'}</div>
+                    <div className="text-[var(--muted)] leading-relaxed mb-3">
+                      {t.form?.azureEnvVarNote || 'Please configure your Azure OpenAI settings using environment variables:'}
+                    </div>
+                    <div className="mb-3">
+                      <div className="text-xs font-medium text-[var(--foreground)] mb-1">{t.form?.azureGenerationModel || 'Text Generation:'}</div>
+                      <ul className="space-y-1 text-xs text-[var(--muted)] font-mono">
+                        <li>• AZURE_OPENAI_ENDPOINT</li>
+                        <li>• AZURE_OPENAI_API_KEY</li>
+                        <li>• AZURE_OPENAI_API_VERSION</li>
+                      </ul>
+                    </div>
+                    <div className="mb-2">
+                      <div className="text-xs font-medium text-[var(--foreground)] mb-1">{t.form?.azureEmbeddingModel || 'Text Embedding:'}</div>
+                      <div className="text-xs text-[var(--muted)] leading-relaxed">
+                        {t.form?.azureEmbeddingNote || 'Text embedding will also use Azure OpenAI. Make sure you have deployed a text-embedding model (e.g., text-embedding-3-small) in your Azure OpenAI resource. You need to use the deployment name, not the model name.'}
+                      </div>
+                      <div className="text-xs text-yellow-600 dark:text-yellow-400 mt-2">
+                        {t.form?.azureEmbeddingDeployment || 'Important: In api/config/embedder.json, change "model": "text-embedding-deployment" to your actual deployment name in Azure OpenAI.'}
+                      </div>
+                    </div>
+                    <div className="text-xs text-orange-500 mt-2">
+                      <strong>{t.form?.azureEmbeddingExample || 'Example embedding endpoint:'}</strong><br />
+                      <code className="text-xs bg-[var(--background)] px-1 py-0.5 rounded">
+                        https://your-name.openai.azure.com/openai/deployments/text-embedding-3-small/embeddings?api-version=2023-05-15
+                      </code>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Access token section */}
             <div className="mb-4">
               <button

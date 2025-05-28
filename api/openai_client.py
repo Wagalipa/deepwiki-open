@@ -25,7 +25,7 @@ from openai.types.chat.chat_completion import Choice
 
 openai = safe_import(OptionalPackages.OPENAI.value[0], OptionalPackages.OPENAI.value[1])
 
-from openai import OpenAI, AsyncOpenAI, Stream
+from openai import OpenAI, AsyncOpenAI, AzureOpenAI, AsyncAzureOpenAI, Stream
 from openai import (
     APITimeoutError,
     InternalServerError,
@@ -143,15 +143,21 @@ class OpenAIClient(ModelClient):
         - response_format: `"url"` or `"b64_json"`
 
     Args:
-        api_key (Optional[str], optional): OpenAI API key. Defaults to `None`.
+        api_key (Optional[str], optional): OpenAI or Azure OpenAI API key. Defaults to `None`.
         chat_completion_parser (Callable[[Completion], Any], optional): A function to parse the chat completion into a `str`. Defaults to `None`.
             The default parser is `get_first_message_content`.
         base_url (str): The API base URL to use when initializing the client.
             Defaults to `"https://api.openai.com"`, but can be customized for third-party API providers or self-hosted models.
         env_api_key_name (str): The environment variable name for the API key. Defaults to `"OPENAI_API_KEY"`.
+        azure_endpoint (Optional[str], optional): Azure OpenAI endpoint URL. If provided, will use Azure OpenAI client.
+        api_version (Optional[str], optional): Azure OpenAI API version. Defaults to "2024-02-01".
+        azure_ad_token (Optional[str], optional): Azure AD token for authentication (alternative to API key).
+        env_azure_endpoint_name (str): The environment variable name for Azure endpoint. Defaults to `"AZURE_OPENAI_ENDPOINT"`.
+        env_azure_api_version_name (str): The environment variable name for Azure API version. Defaults to `"AZURE_OPENAI_API_VERSION"`.
 
     References:
         - OpenAI API Overview: https://platform.openai.com/docs/introduction
+        - Azure OpenAI Service: https://docs.microsoft.com/en-us/azure/cognitive-services/openai/
         - Embeddings Guide: https://platform.openai.com/docs/guides/embeddings
         - Chat Completion Models: https://platform.openai.com/docs/guides/text-generation
         - Vision Models: https://platform.openai.com/docs/guides/vision
@@ -166,19 +172,41 @@ class OpenAIClient(ModelClient):
         base_url: Optional[str] = None,
         env_base_url_name: str = "OPENAI_BASE_URL",
         env_api_key_name: str = "OPENAI_API_KEY",
+        azure_endpoint: Optional[str] = None,
+        api_version: Optional[str] = None,
+        azure_ad_token: Optional[str] = None,
+        env_azure_endpoint_name: str = "AZURE_OPENAI_ENDPOINT",
+        env_azure_api_version_name: str = "AZURE_OPENAI_API_VERSION",
     ):
         r"""It is recommended to set the OPENAI_API_KEY environment variable instead of passing it as an argument.
+        For Azure OpenAI, set AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_VERSION, and AZURE_OPENAI_API_KEY environment variables.
 
         Args:
-            api_key (Optional[str], optional): OpenAI API key. Defaults to None.
+            api_key (Optional[str], optional): OpenAI or Azure OpenAI API key. Defaults to None.
             base_url (str): The API base URL to use when initializing the client.
             env_api_key_name (str): The environment variable name for the API key. Defaults to `"OPENAI_API_KEY"`.
+            azure_endpoint (Optional[str], optional): Azure OpenAI endpoint URL. If provided, will use Azure OpenAI client.
+            api_version (Optional[str], optional): Azure OpenAI API version. Defaults to "2024-02-01".
+            azure_ad_token (Optional[str], optional): Azure AD token for authentication (alternative to API key).
+            env_azure_endpoint_name (str): The environment variable name for Azure endpoint.
+            env_azure_api_version_name (str): The environment variable name for Azure API version.
         """
         super().__init__()
         self._api_key = api_key
         self._env_api_key_name = env_api_key_name
         self._env_base_url_name = env_base_url_name
+        self._env_azure_endpoint_name = env_azure_endpoint_name
+        self._env_azure_api_version_name = env_azure_api_version_name
+        
+        # Azure OpenAI specific parameters
+        self.azure_endpoint = azure_endpoint or os.getenv(self._env_azure_endpoint_name)
+        self.api_version = api_version or os.getenv(self._env_azure_api_version_name, "2024-02-01")
+        self.azure_ad_token = azure_ad_token
+        self.is_azure = bool(self.azure_endpoint)
+        
+        # Set base_url for regular OpenAI
         self.base_url = base_url or os.getenv(self._env_base_url_name, "https://api.openai.com/v1")
+        
         self.sync_client = self.init_sync_client()
         self.async_client = None  # only initialize if the async call is called
         self.chat_completion_parser = (
@@ -188,20 +216,60 @@ class OpenAIClient(ModelClient):
         self._api_kwargs = {}  # add api kwargs when the OpenAI Client is called
 
     def init_sync_client(self):
-        api_key = self._api_key or os.getenv(self._env_api_key_name)
-        if not api_key:
-            raise ValueError(
-                f"Environment variable {self._env_api_key_name} must be set"
+        if self.is_azure:
+            # Azure OpenAI client
+            api_key = self._api_key or os.getenv(self._env_api_key_name, os.getenv("AZURE_OPENAI_API_KEY"))
+            if not api_key and not self.azure_ad_token:
+                raise ValueError(
+                    f"Either environment variable {self._env_api_key_name} or AZURE_OPENAI_API_KEY must be set for Azure OpenAI, "
+                    "or azure_ad_token must be provided"
+                )
+            if not self.azure_endpoint:
+                raise ValueError(
+                    f"Environment variable {self._env_azure_endpoint_name} or azure_endpoint must be set for Azure OpenAI"
+                )
+            return AzureOpenAI(
+                api_key=api_key,
+                azure_endpoint=self.azure_endpoint,
+                api_version=self.api_version,
+                azure_ad_token=self.azure_ad_token,
             )
-        return OpenAI(api_key=api_key, base_url=self.base_url)
+        else:
+            # Regular OpenAI client
+            api_key = self._api_key or os.getenv(self._env_api_key_name)
+            if not api_key:
+                raise ValueError(
+                    f"Environment variable {self._env_api_key_name} must be set"
+                )
+            return OpenAI(api_key=api_key, base_url=self.base_url)
 
     def init_async_client(self):
-        api_key = self._api_key or os.getenv(self._env_api_key_name)
-        if not api_key:
-            raise ValueError(
-                f"Environment variable {self._env_api_key_name} must be set"
+        if self.is_azure:
+            # Azure OpenAI async client
+            api_key = self._api_key or os.getenv(self._env_api_key_name, os.getenv("AZURE_OPENAI_API_KEY"))
+            if not api_key and not self.azure_ad_token:
+                raise ValueError(
+                    f"Either environment variable {self._env_api_key_name} or AZURE_OPENAI_API_KEY must be set for Azure OpenAI, "
+                    "or azure_ad_token must be provided"
+                )
+            if not self.azure_endpoint:
+                raise ValueError(
+                    f"Environment variable {self._env_azure_endpoint_name} or azure_endpoint must be set for Azure OpenAI"
+                )
+            return AsyncAzureOpenAI(
+                api_key=api_key,
+                azure_endpoint=self.azure_endpoint,
+                api_version=self.api_version,
+                azure_ad_token=self.azure_ad_token,
             )
-        return AsyncOpenAI(api_key=api_key, base_url=self.base_url)
+        else:
+            # Regular OpenAI async client
+            api_key = self._api_key or os.getenv(self._env_api_key_name)
+            if not api_key:
+                raise ValueError(
+                    f"Environment variable {self._env_api_key_name} must be set"
+                )
+            return AsyncOpenAI(api_key=api_key, base_url=self.base_url)
 
     # def _parse_chat_completion(self, completion: ChatCompletion) -> "GeneratorOutput":
     #     # TODO: raw output it is better to save the whole completion as a source of truth instead of just the message
@@ -413,9 +481,25 @@ class OpenAIClient(ModelClient):
         kwargs is the combined input and model_kwargs.  Support streaming call.
         """
         log.info(f"api_kwargs: {api_kwargs}")
+        log.info(f"model_type: {model_type}")
+        log.info(f"is_azure: {self.is_azure}")
+        if self.is_azure:
+            log.info(f"Azure endpoint: {self.azure_endpoint}")
+            log.info(f"Azure API version: {self.api_version}")
+            
         self._api_kwargs = api_kwargs
         if model_type == ModelType.EMBEDDER:
-            return self.sync_client.embeddings.create(**api_kwargs)
+            try:
+                response = self.sync_client.embeddings.create(**api_kwargs)
+                log.info(f"Embedding response received: {type(response)}")
+                if hasattr(response, 'data') and response.data:
+                    log.info(f"Number of embeddings: {len(response.data)}")
+                    if response.data:
+                        log.info(f"First embedding dimension: {len(response.data[0].embedding)}")
+                return response
+            except Exception as e:
+                log.error(f"Error creating embeddings: {str(e)}")
+                raise
         elif model_type == ModelType.LLM:
             if "stream" in api_kwargs and api_kwargs.get("stream", False):
                 log.debug("streaming call")
@@ -597,12 +681,29 @@ if __name__ == "__main__":
     setup_env()
     prompt_kwargs = {"input_str": "What is the meaning of life?"}
 
+    # Regular OpenAI example
     gen = Generator(
         model_client=OpenAIClient(),
         model_kwargs={"model": "gpt-4o", "stream": False},
     )
     gen_response = gen(prompt_kwargs)
     print(f"gen_response: {gen_response}")
+
+    # Azure OpenAI example
+    # Make sure to set environment variables:
+    # AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
+    # AZURE_OPENAI_API_KEY=your-api-key
+    # AZURE_OPENAI_API_VERSION=2024-02-01
+    azure_gen = Generator(
+        model_client=OpenAIClient(
+            azure_endpoint="https://your-resource.openai.azure.com/",
+            api_version="2024-02-01",
+            api_key="your-api-key"  # or set AZURE_OPENAI_API_KEY env var
+        ),
+        model_kwargs={"model": "gpt-4o", "stream": False},  # Use your Azure deployment name
+    )
+    # azure_response = azure_gen(prompt_kwargs)
+    # print(f"azure_response: {azure_response}")
 
     # for genout in gen_response.data:
     #     print(f"genout: {genout}")

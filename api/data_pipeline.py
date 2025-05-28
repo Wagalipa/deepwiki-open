@@ -339,12 +339,13 @@ def read_all_documents(path: str, local_ollama: bool = False, excluded_dirs: Lis
     logger.info(f"Found {len(documents)} documents")
     return documents
 
-def prepare_data_pipeline(local_ollama: bool = False):
+def prepare_data_pipeline(local_ollama: bool = False, provider: str = None):
     """
     Creates and returns the data transformation pipeline.
 
     Args:
         local_ollama (bool): Whether to use local Ollama for embedding (default: False)
+        provider (str): The provider being used (azure-openai, openai, ollama, etc.)
 
     Returns:
         adal.Sequential: The data transformation pipeline
@@ -358,6 +359,33 @@ def prepare_data_pipeline(local_ollama: bool = False):
             model_kwargs=configs["embedder_ollama"]["model_kwargs"],
         )
         embedder_transformer = OllamaDocumentProcessor(embedder=embedder)
+    elif provider == "azure-openai":
+        # Use Azure OpenAI embedder
+        from api.openai_client import OpenAIClient
+        import os
+        
+        # Debug logging for Azure OpenAI configuration
+        azure_endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
+        azure_key = os.environ.get("AZURE_OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY")
+        azure_version = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-02-01")
+        
+        logger.info(f"Azure OpenAI Endpoint: {azure_endpoint}")
+        logger.info(f"Azure OpenAI API Version: {azure_version}")
+        logger.info(f"Azure OpenAI API Key exists: {bool(azure_key)}")
+        logger.info(f"Azure embedding model: {configs['embedder_azure']['model_kwargs']['model']}")
+        
+        azure_client = OpenAIClient(
+            azure_endpoint=azure_endpoint,
+            api_key=azure_key,
+            api_version=azure_version
+        )
+        embedder = adal.Embedder(
+            model_client=azure_client,
+            model_kwargs=configs["embedder_azure"]["model_kwargs"],
+        )
+        embedder_transformer = ToEmbeddings(
+            embedder=embedder, batch_size=configs["embedder_azure"]["batch_size"]
+        )
     else:
         # Use OpenAI embedder
         embedder = adal.Embedder(
@@ -374,7 +402,7 @@ def prepare_data_pipeline(local_ollama: bool = False):
     return data_transformer
 
 def transform_documents_and_save_to_db(
-    documents: List[Document], db_path: str, local_ollama: bool = False
+    documents: List[Document], db_path: str, local_ollama: bool = False, provider: str = None
 ) -> LocalDB:
     """
     Transforms a list of documents and saves them to a local database.
@@ -383,15 +411,27 @@ def transform_documents_and_save_to_db(
         documents (list): A list of `Document` objects.
         db_path (str): The path to the local database file.
         local_ollama (bool): Whether to use local Ollama for embedding (default: False)
+        provider (str): The provider being used (azure-openai, openai, ollama, etc.)
     """
+    logger.info(f"transform_documents_and_save_to_db called with provider: {provider}")
+    logger.info(f"Number of documents to process: {len(documents)}")
+    
     # Get the data transformer
-    data_transformer = prepare_data_pipeline(local_ollama)
+    data_transformer = prepare_data_pipeline(local_ollama, provider)
 
     # Save the documents to a local database
     db = LocalDB()
     db.register_transformer(transformer=data_transformer, key="split_and_embed")
     db.load(documents)
-    db.transform(key="split_and_embed")
+    
+    logger.info("Starting document transformation...")
+    try:
+        db.transform(key="split_and_embed")
+        logger.info("Document transformation completed successfully")
+    except Exception as e:
+        logger.error(f"Error during document transformation: {str(e)}")
+        raise
+    
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
     db.save_state(filepath=db_path)
     return db
@@ -643,7 +683,7 @@ class DatabaseManager:
         self.repo_paths = None
 
     def prepare_database(self, repo_url_or_path: str, type: str = "github", access_token: str = None, local_ollama: bool = False,
-                       excluded_dirs: List[str] = None, excluded_files: List[str] = None,
+                       provider: str = None, excluded_dirs: List[str] = None, excluded_files: List[str] = None,
                        included_dirs: List[str] = None, included_files: List[str] = None) -> List[Document]:
         """
         Create a new database from the repository.
@@ -652,6 +692,7 @@ class DatabaseManager:
             repo_url_or_path (str): The URL or local path of the repository
             access_token (str, optional): Access token for private repositories
             local_ollama (bool): Whether to use local Ollama for embedding (default: False)
+            provider (str, optional): The provider being used (azure-openai, openai, ollama, etc.)
             excluded_dirs (List[str], optional): List of directories to exclude from processing
             excluded_files (List[str], optional): List of file patterns to exclude from processing
             included_dirs (List[str], optional): List of directories to include exclusively
@@ -662,7 +703,7 @@ class DatabaseManager:
         """
         self.reset_database()
         self._create_repo(repo_url_or_path, type, access_token)
-        return self.prepare_db_index(local_ollama=local_ollama, excluded_dirs=excluded_dirs, excluded_files=excluded_files,
+        return self.prepare_db_index(local_ollama=local_ollama, provider=provider, excluded_dirs=excluded_dirs, excluded_files=excluded_files,
                                    included_dirs=included_dirs, included_files=included_files)
 
     def reset_database(self):
@@ -734,13 +775,14 @@ class DatabaseManager:
             logger.error(f"Failed to create repository structure: {e}")
             raise
 
-    def prepare_db_index(self, local_ollama: bool = False, excluded_dirs: List[str] = None, excluded_files: List[str] = None,
+    def prepare_db_index(self, local_ollama: bool = False, provider: str = None, excluded_dirs: List[str] = None, excluded_files: List[str] = None,
                         included_dirs: List[str] = None, included_files: List[str] = None) -> List[Document]:
         """
         Prepare the indexed database for the repository.
 
         Args:
             local_ollama (bool): Whether to use local Ollama for embedding (default: False)
+            provider (str, optional): The provider being used (azure-openai, openai, ollama, etc.)
             excluded_dirs (List[str], optional): List of directories to exclude from processing
             excluded_files (List[str], optional): List of file patterns to exclude from processing
             included_dirs (List[str], optional): List of directories to include exclusively
@@ -773,7 +815,7 @@ class DatabaseManager:
             included_files=included_files
         )
         self.db = transform_documents_and_save_to_db(
-            documents, self.repo_paths["save_db_file"], local_ollama=local_ollama
+            documents, self.repo_paths["save_db_file"], local_ollama=local_ollama, provider=provider
         )
         logger.info(f"Total documents: {len(documents)}")
         transformed_docs = self.db.get_transformed_data(key="split_and_embed")
